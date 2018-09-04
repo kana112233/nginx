@@ -1,8 +1,8 @@
 
 /*
- * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
- */
+ *  * Copyright (C) Igor Sysoev
+ *   * Copyright (C) Nginx, Inc.
+ *    */
 
 
 #include <ngx_config.h>
@@ -16,6 +16,7 @@ typedef struct {
     ngx_flag_t  enable;
     ngx_flag_t  pass_error_message;
     ngx_flag_t  xclient;
+    ngx_flag_t  smtp_auth_reproxy;   /* auth_reproxy */
     size_t      buffer_size;
     ngx_msec_t  timeout;
 } ngx_mail_proxy_conf_t;
@@ -72,6 +73,14 @@ static ngx_command_t  ngx_mail_proxy_commands[] = {
       ngx_conf_set_flag_slot,
       NGX_MAIL_SRV_CONF_OFFSET,
       offsetof(ngx_mail_proxy_conf_t, xclient),
+      NULL },
+    
+    /* auth_reproxy */
+    { ngx_string("smtp_auth_reproxy"),
+      NGX_MAIL_MAIN_CONF|NGX_MAIL_SRV_CONF|NGX_CONF_FLAG,
+      ngx_conf_set_flag_slot,
+      NGX_MAIL_SRV_CONF_OFFSET,
+      offsetof(ngx_mail_proxy_conf_t, smtp_auth_reproxy),
       NULL },
 
       ngx_null_command
@@ -299,9 +308,9 @@ ngx_mail_proxy_pop3_handler(ngx_event_t *rev)
 
     if (c->send(c, line.data, line.len) < (ssize_t) line.len) {
         /*
-         * we treat the incomplete sending as NGX_ERROR
-         * because it is very strange here
-         */
+ *          * we treat the incomplete sending as NGX_ERROR
+ *                   * because it is very strange here
+ *                            */
         ngx_mail_proxy_internal_server_error(s);
         return;
     }
@@ -433,9 +442,9 @@ ngx_mail_proxy_imap_handler(ngx_event_t *rev)
 
     if (c->send(c, line.data, line.len) < (ssize_t) line.len) {
         /*
-         * we treat the incomplete sending as NGX_ERROR
-         * because it is very strange here
-         */
+ *          * we treat the incomplete sending as NGX_ERROR
+ *                   * because it is very strange here
+ *                            */
         ngx_mail_proxy_internal_server_error(s);
         return;
     }
@@ -456,6 +465,8 @@ ngx_mail_proxy_smtp_handler(ngx_event_t *rev)
     ngx_mail_session_t        *s;
     ngx_mail_proxy_conf_t     *pcf;
     ngx_mail_core_srv_conf_t  *cscf;
+    ngx_str_t                 base64_username;
+    ngx_str_t                 base64_password;
 
     ngx_log_debug0(NGX_LOG_DEBUG_MAIL, rev->log, 0,
                    "mail proxy smtp auth handler");
@@ -513,12 +524,94 @@ ngx_mail_proxy_smtp_handler(ngx_event_t *rev)
         } else if (s->auth_method == NGX_MAIL_AUTH_NONE) {
             s->mail_state = ngx_smtp_helo_from;
 
+        } else if (pcf->smtp_auth_reproxy) {
+            s->mail_state = ngx_smtp_auth_reproxy_auth_login;
+            
         } else {
             s->mail_state = ngx_smtp_helo;
         }
 
         break;
+    case ngx_smtp_auth_reproxy_auth_login:
+        ngx_log_debug0(NGX_LOG_DEBUG_MAIL, rev->log, 0,
+                       "mail proxy auth reproxy send client AUTH LOGIN");
 
+        s->connection->log->action = "sending client AUTH LOGIN to upstream";
+
+        line.len = sizeof("AUTH LOGIN") - 1 + 2;
+        line.data = ngx_pnalloc(c->pool, line.len);
+        if (line.data == NULL) {
+            ngx_mail_proxy_internal_server_error(s);
+            return;
+        }
+
+        p = ngx_cpymem(line.data,
+                       "AUTH LOGIN",
+                       sizeof("AUTH LOGIN") - 1);
+
+        *p++ = CR; *p = LF;
+
+        s->mail_state = ngx_smtp_auth_reproxy_login_username;
+
+        break;
+    case ngx_smtp_auth_reproxy_login_username:
+        ngx_log_debug0(NGX_LOG_DEBUG_MAIL, rev->log, 0,
+                       "mail proxy auth reproxy send client USERNAME");
+
+        s->connection->log->action = "sending (AUTH)USERNAME to upstream";
+
+        cscf = ngx_mail_get_module_srv_conf(s, ngx_mail_core_module);
+
+        base64_username.len = ngx_base64_encoded_length(s->login.len);
+        base64_username.data = ngx_palloc(c->pool, base64_username.len);
+        if (base64_username.data == NULL) {
+            ngx_mail_proxy_internal_server_error(s);
+            return;
+        }
+        ngx_encode_base64(&base64_username, &s->login);
+
+        line.len = base64_username.len + 2;
+        line.data = ngx_pnalloc(c->pool, line.len);
+        if (line.data == NULL) {
+            ngx_mail_proxy_internal_server_error(s);
+            return;
+        }
+
+        p = ngx_cpymem(line.data, base64_username.data, base64_username.len);
+        *p++ = CR; *p = LF;
+
+        s->mail_state = ngx_smtp_auth_reproxy_login_password;
+        break;
+    
+    case ngx_smtp_auth_reproxy_login_password:
+        ngx_log_debug0(NGX_LOG_DEBUG_MAIL, rev->log, 0,
+                       "mail proxy auth reproxy send client PASSWORD");
+                       
+        s->connection->log->action = "sending (AUTH)PASSWORD to upstream";
+
+        cscf = ngx_mail_get_module_srv_conf(s, ngx_mail_core_module);
+
+        base64_password.len = ngx_base64_encoded_length(s->passwd.len);
+        base64_password.data = ngx_palloc(c->pool, base64_password.len);
+        if (base64_password.data == NULL) {
+            ngx_mail_proxy_internal_server_error(s);
+            return;
+        }
+        ngx_encode_base64(&base64_password, &s->passwd);
+
+        line.len = base64_password.len + 2;
+        line.data = ngx_pnalloc(c->pool, line.len);
+        if (line.data == NULL) {
+            ngx_mail_proxy_internal_server_error(s);
+            return;
+        }
+        
+        p = ngx_cpymem(line.data, base64_password.data, base64_password.len);
+        *p++ = CR; *p = LF;
+
+        s->mail_state = ngx_smtp_helo;
+        break;
+    
     case ngx_smtp_helo_xclient:
         ngx_log_debug0(NGX_LOG_DEBUG_MAIL, rev->log, 0,
                        "mail proxy send xclient");
@@ -644,7 +737,7 @@ ngx_mail_proxy_smtp_handler(ngx_event_t *rev)
     case ngx_smtp_helo:
     case ngx_smtp_xclient:
     case ngx_smtp_to:
-
+    
         b = s->proxy->buffer;
 
         if (s->auth_method == NGX_MAIL_AUTH_NONE) {
@@ -685,9 +778,9 @@ ngx_mail_proxy_smtp_handler(ngx_event_t *rev)
 
     if (c->send(c, line.data, line.len) < (ssize_t) line.len) {
         /*
-         * we treat the incomplete sending as NGX_ERROR
-         * because it is very strange here
-         */
+ *          * we treat the incomplete sending as NGX_ERROR
+ *                   * because it is very strange here
+ *                            */
         ngx_mail_proxy_internal_server_error(s);
         return;
     }
@@ -820,12 +913,23 @@ ngx_mail_proxy_read_response(ngx_mail_session_t *s, ngx_uint_t state)
                 return NGX_OK;
             }
             break;
-
+        
+        case ngx_smtp_auth_reproxy_auth_login:
         case ngx_smtp_helo:
         case ngx_smtp_helo_xclient:
         case ngx_smtp_helo_from:
         case ngx_smtp_from:
-            if (p[0] == '2' && p[1] == '5' && p[2] == '0') {
+        
+            if (p[0] == '5' && p[1] == '3' && p[2] == '5') {  /* 535 = Authentication fail */
+                break;
+            }
+            
+            if (p[0] == '2' && p[1] == '3' && p[2] == '5') {  /* 235 = Authentication successful */
+                return NGX_OK;
+            }
+
+        
+            if (p[0] == '2' && p[1] == '5' && p[2] == '0') {   
                 return NGX_OK;
             }
             break;
@@ -837,7 +941,15 @@ ngx_mail_proxy_read_response(ngx_mail_session_t *s, ngx_uint_t state)
                 return NGX_OK;
             }
             break;
-
+            
+        case ngx_smtp_auth_reproxy_login_username:
+        case ngx_smtp_auth_reproxy_login_password:
+            if (p[0] == '3' && p[1] == '3' && p[2] == '4') {
+                return NGX_OK;
+            }
+            
+            return NGX_AGAIN;
+        
         case ngx_smtp_to:
             return NGX_OK;
         }
@@ -882,10 +994,13 @@ ngx_mail_proxy_handler(ngx_event_t *ev)
     c = ev->data;
     s = c->data;
 
-    if (ev->timedout) {
+    if (ev->timedout || c->close) {
         c->log->action = "proxying";
 
-        if (c == s->connection) {
+		if (c->close) {
+            ngx_log_error(NGX_LOG_INFO, c->log, 0, "shutdown timeout");
+
+        } else if (c == s->connection) {
             ngx_log_error(NGX_LOG_INFO, c->log, NGX_ETIMEDOUT,
                           "client timed out");
             c->timedout = 1;
@@ -1101,6 +1216,7 @@ ngx_mail_proxy_create_conf(ngx_conf_t *cf)
     pcf->xclient = NGX_CONF_UNSET;
     pcf->buffer_size = NGX_CONF_UNSET_SIZE;
     pcf->timeout = NGX_CONF_UNSET_MSEC;
+    pcf->smtp_auth_reproxy = NGX_CONF_UNSET;  /* auth_reproxy */
 
     return pcf;
 }
@@ -1115,6 +1231,7 @@ ngx_mail_proxy_merge_conf(ngx_conf_t *cf, void *parent, void *child)
     ngx_conf_merge_value(conf->enable, prev->enable, 0);
     ngx_conf_merge_value(conf->pass_error_message, prev->pass_error_message, 0);
     ngx_conf_merge_value(conf->xclient, prev->xclient, 1);
+    ngx_conf_merge_value(conf->smtp_auth_reproxy, prev->smtp_auth_reproxy, 0);  /* auth_reproxy */
     ngx_conf_merge_size_value(conf->buffer_size, prev->buffer_size,
                               (size_t) ngx_pagesize);
     ngx_conf_merge_msec_value(conf->timeout, prev->timeout, 24 * 60 * 60000);

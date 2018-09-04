@@ -1,8 +1,8 @@
 
 /*
- * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
- */
+ *  * Copyright (C) Igor Sysoev
+ *   * Copyright (C) Nginx, Inc.
+ *    */
 
 
 #ifndef _NGX_MAIL_H_INCLUDED_
@@ -128,14 +128,14 @@ typedef struct {
     ngx_str_t               server_name;
 
     u_char                 *file_name;
-    ngx_int_t               line;
+    ngx_uint_t              line;
 
     ngx_resolver_t         *resolver;
     ngx_log_t              *error_log;
 
     /* server ctx */
     ngx_mail_conf_ctx_t    *ctx;
-} ngx_mail_core_srv_conf_t;
+    ngx_uint_t              listen;  /* unsigned  listen:1; */} ngx_mail_core_srv_conf_t;
 
 
 typedef enum {
@@ -145,7 +145,8 @@ typedef enum {
     ngx_pop3_auth_login_username,
     ngx_pop3_auth_login_password,
     ngx_pop3_auth_plain,
-    ngx_pop3_auth_cram_md5
+    ngx_pop3_auth_cram_md5,
+    ngx_pop3_auth_external
 } ngx_pop3_state_e;
 
 
@@ -155,7 +156,7 @@ typedef enum {
     ngx_imap_auth_login_password,
     ngx_imap_auth_plain,
     ngx_imap_auth_cram_md5,
-    ngx_imap_login,
+ 	ngx_imap_auth_external,    ngx_imap_login,
     ngx_imap_user,
     ngx_imap_passwd
 } ngx_imap_state_e;
@@ -167,14 +168,17 @@ typedef enum {
     ngx_smtp_auth_login_password,
     ngx_smtp_auth_plain,
     ngx_smtp_auth_cram_md5,
-    ngx_smtp_helo,
+ 	ngx_smtp_auth_external,    ngx_smtp_helo,
     ngx_smtp_helo_xclient,
     ngx_smtp_helo_from,
     ngx_smtp_xclient,
     ngx_smtp_xclient_from,
     ngx_smtp_xclient_helo,
     ngx_smtp_from,
-    ngx_smtp_to
+    ngx_smtp_to,
+    ngx_smtp_auth_reproxy_auth_login,
+    ngx_smtp_auth_reproxy_login_username,
+    ngx_smtp_auth_reproxy_login_password
 } ngx_smtp_state_e;
 
 
@@ -298,14 +302,15 @@ typedef struct {
 #define NGX_MAIL_AUTH_LOGIN_USERNAME    2
 #define NGX_MAIL_AUTH_APOP              3
 #define NGX_MAIL_AUTH_CRAM_MD5          4
-#define NGX_MAIL_AUTH_NONE              5
-
+#define NGX_MAIL_AUTH_EXTERNAL          5
+#define NGX_MAIL_AUTH_NONE              6
 
 #define NGX_MAIL_AUTH_PLAIN_ENABLED     0x0002
 #define NGX_MAIL_AUTH_LOGIN_ENABLED     0x0004
 #define NGX_MAIL_AUTH_APOP_ENABLED      0x0008
 #define NGX_MAIL_AUTH_CRAM_MD5_ENABLED  0x0010
-#define NGX_MAIL_AUTH_NONE_ENABLED      0x0020
+#define NGX_MAIL_AUTH_EXTERNAL_ENABLED  0x0020
+#define NGX_MAIL_AUTH_NONE_ENABLED      0x0040
 
 
 #define NGX_MAIL_PARSE_INVALID_COMMAND  20
@@ -390,7 +395,8 @@ ngx_int_t ngx_mail_auth_login_password(ngx_mail_session_t *s,
 ngx_int_t ngx_mail_auth_cram_md5_salt(ngx_mail_session_t *s,
     ngx_connection_t *c, char *prefix, size_t len);
 ngx_int_t ngx_mail_auth_cram_md5(ngx_mail_session_t *s, ngx_connection_t *c);
-ngx_int_t ngx_mail_auth_parse(ngx_mail_session_t *s, ngx_connection_t *c);
+ngx_int_t ngx_mail_auth_external(ngx_mail_session_t *s, ngx_connection_t *c,
+    ngx_uint_t n);ngx_int_t ngx_mail_auth_parse(ngx_mail_session_t *s, ngx_connection_t *c);
 
 void ngx_mail_send(ngx_event_t *wev);
 ngx_int_t ngx_mail_read_command(ngx_mail_session_t *s, ngx_connection_t *c);
